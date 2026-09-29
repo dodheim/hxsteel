@@ -25,11 +25,14 @@ default-members = [
 lto = "thin"
 
 [profile.opt]
-inherits = "release"
-lto = "fat"
+inherits      = "release"
+opt-level     = 3
+debug         = false
+strip         = "symbols"
+lto           = "fat"
+panic         = "unwind"
+incremental   = false
 codegen-units = 1
-strip = true
-opt-level = 3
 
 [profile.integration]
 inherits = "test"
