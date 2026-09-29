@@ -385,6 +385,8 @@ pub struct Config {
     pub whitespace: WhitespaceConfig,
     /// Persistently display open buffers along the top
     pub bufferline: BufferLine,
+    /// Persistently display breadcrumb along the top of each view, below any bufferline.
+    pub breadcrumb: BreadcrumbConfig,
     /// Vertical indent width guides.
     pub indent_guides: IndentGuidesConfig,
     /// Whether to color modes with different colors. Defaults to `false`.
@@ -516,6 +518,23 @@ impl Config {
                 .right
                 .contains(&StatusLineElement::CodeActionHint)
     }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub struct BreadcrumbConfig {
+    pub enable: bool,
+    #[serde(default)]
+    pub path: BreadcrumbPathOptions,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum BreadcrumbPathOptions {
+    #[default]
+    Full,
+    File,
+    None,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
@@ -1267,6 +1286,7 @@ impl Default for Config {
             rulers: Vec::new(),
             whitespace: WhitespaceConfig::default(),
             bufferline: BufferLine::default(),
+            breadcrumb: BreadcrumbConfig::default(),
             indent_guides: IndentGuidesConfig::default(),
             color_modes: false,
             soft_wrap: SoftWrap {
@@ -1881,6 +1901,7 @@ impl Editor {
         let diagnostics = Editor::doc_diagnostics(&self.language_servers, &self.diagnostics, doc);
         doc.replace_diagnostics(diagnostics, &[], None);
         doc.reset_all_inlay_hints();
+        doc.clear_document_symbols();
     }
 
     /// Launch a language server for a given document
@@ -2195,12 +2216,12 @@ impl Editor {
                 .workspace_trust
                 .query(doc.workspace_root(), TrustQuery::Git)
                 .is_trusted();
-            if let Some(diff_base) = self.diff_providers.get_diff_base(&path, trust_full) {
+            // When opening a *new* file, ensure its diff provider is loaded.
+            self.diff_providers.add(&path, trust_full);
+            if let Some(diff_base) = self.diff_providers.get_diff_base(&path) {
                 doc.set_diff_base(diff_base);
             }
-            doc.set_version_control_head(
-                self.diff_providers.get_current_head_name(&path, trust_full),
-            );
+            doc.set_version_control_head(self.diff_providers.get_current_head_name(&path));
 
             let id = self.new_document(doc);
             self.launch_language_servers(id);
@@ -2234,6 +2255,10 @@ impl Editor {
         };
         if !force && doc.is_modified() {
             return Err(CloseError::BufferModified(doc.display_name().into_owned()));
+        }
+
+        if let Some(path) = doc.path() {
+            self.diff_providers.remove(path);
         }
 
         // This will also disallow any follow-up writes
