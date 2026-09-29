@@ -2,7 +2,7 @@ use helix_event::{events, register_event};
 use helix_view::document::Mode;
 use helix_view::events::{
     ConfigDidChange, DiagnosticsDidChange, DocumentDidChange, DocumentDidClose, DocumentDidOpen,
-    DocumentFocusLost, DocumentSaved, LanguageServerExited, LanguageServerInitialized,
+    DocumentFocusLost, DocumentSaved, DocumentSymbolsDidChange, LanguageServerExited, LanguageServerInitialized,
     SelectionDidChange,
 };
 
@@ -28,6 +28,7 @@ pub fn register() {
     register_event::<DocumentDidClose>();
     register_event::<DocumentFocusLost>();
     register_event::<DocumentSaved>();
+    register_event::<DocumentSymbolsDidChange>();
     register_event::<SelectionDidChange>();
     register_event::<DiagnosticsDidChange>();
     register_event::<LanguageServerInitialized>();

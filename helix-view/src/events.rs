@@ -25,6 +25,8 @@ events! {
     // called **after** a document loses focus (but not when its closed)
     DocumentFocusLost<'a> { editor: &'a mut Editor, doc: DocumentId }
     DocumentSaved<'a> { editor: &'a mut Editor, doc: DocumentId }
+    // called **after** the cached document symbols of a document have been replaced
+    DocumentSymbolsDidChange<'a> { editor: &'a mut Editor, doc: DocumentId }
 
     LanguageServerInitialized<'a> {
         editor: &'a mut Editor,

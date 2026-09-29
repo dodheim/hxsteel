@@ -1,3 +1,9 @@
+mod breadcrumbs;
+use breadcrumbs::Breadcrumbs;
+
+mod symbols;
+use symbols::DocumentSymbols;
+
 use anyhow::{anyhow, bail, Error};
 use arc_swap::access::DynAccess;
 use arc_swap::ArcSwap;
@@ -149,15 +155,23 @@ pub struct Document {
     ///
     /// To know if they're up-to-date, check the `id` field in `DocumentInlayHints`.
     pub(crate) inlay_hints: HashMap<ViewId, DocumentInlayHints>,
+    /// Set to `true` when the document is updated, reset to `false` on the next inlay hints
+    /// update from the LSP
+    pub inlay_hints_oudated: bool,
+
     /// Jump label overlays for each view.
     pub(crate) jump_labels: HashMap<ViewId, Vec<Overlay>>,
+
     /// LSP document highlights for each view, stored as char ranges.
     pub(crate) document_highlights: HashMap<ViewId, DocumentHighlights>,
     /// LSP code action hints for each view.
     pub(crate) code_action_hints: HashSet<ViewId>,
-    /// Set to `true` when the document is updated, reset to `false` on the next inlay hints
-    /// update from the LSP
-    pub inlay_hints_oudated: bool,
+
+    // Stores all the symbols of the Document.
+    pub(crate) symbols: Option<DocumentSymbols>,
+
+    /// Breadcrumb trail for each view showing this document.
+    pub breadcrumbs: HashMap<ViewId, Breadcrumbs>,
 
     path: Option<PathBuf>,
     relative_path: OnceLock<Option<PathBuf>>,
@@ -235,6 +249,7 @@ pub struct Document {
     pub code_action_controllers: HashMap<ViewId, TaskController>,
     pub pull_diagnostic_controller: TaskController,
     pub document_link_controller: TaskController,
+    pub document_symbols_controller: TaskController,
 
     // NOTE: this field should eventually go away - we should use the Editor's syn_loader instead
     // of storing a copy on every doc. Then we can remove the surrounding `Arc` and use the
@@ -803,6 +818,9 @@ impl Document {
             previous_diagnostic_ids: HashMap::new(),
             pull_diagnostic_controller: TaskController::new(),
             document_link_controller: TaskController::new(),
+            symbols: None,
+            document_symbols_controller: TaskController::new(),
+            breadcrumbs: HashMap::new(),
         }
     }
 
@@ -1350,7 +1368,7 @@ impl Document {
     pub fn reload(
         &mut self,
         view: &mut View,
-        provider_registry: &DiffProviderRegistry,
+        provider_registry: &mut DiffProviderRegistry,
         trust_full: bool,
     ) -> Result<(), Error> {
         let encoding = self.encoding;
@@ -1361,6 +1379,8 @@ impl Document {
                 false => bail!("can't find file to reload from {:?}", self.display_name()),
             },
         };
+
+        provider_registry.reload(&path, trust_full);
 
         // Once we have a valid path we check if its readonly status has changed
         self.detect_readonly();
@@ -1380,12 +1400,12 @@ impl Document {
         self.pickup_last_saved_time();
         self.detect_indent_and_line_ending();
 
-        match provider_registry.get_diff_base(&path, trust_full) {
+        match provider_registry.get_diff_base(&path) {
             Some(diff_base) => self.set_diff_base(diff_base),
             None => self.diff_handle = None,
         }
 
-        self.version_control_head = provider_registry.get_current_head_name(&path, trust_full);
+        self.version_control_head = provider_registry.get_current_head_name(&path);
 
         Ok(())
     }
@@ -1499,6 +1519,10 @@ impl Document {
         }
 
         self.view_data_mut(view_id);
+
+        if self.config.load().breadcrumb.enable {
+            self.update_breadcrumbs_for_view(view_id);
+        }
     }
 
     /// Mark document as recent used for MRU sorting
@@ -1506,12 +1530,13 @@ impl Document {
         self.focused_at = std::time::Instant::now();
     }
 
-    /// Remove a view's selection and inlay hints from this document.
+    /// Remove any views' data and state that is stored in the `Document`.
     pub fn remove_view(&mut self, view_id: ViewId) {
         self.selections.remove(&view_id);
         self.view_data.remove(&view_id);
         self.inlay_hints.remove(&view_id);
         self.jump_labels.remove(&view_id);
+        self.breadcrumbs.remove(&view_id);
         self.document_highlights.remove(&view_id);
         self.document_highlight_controllers.remove(&view_id);
         self.code_action_hints.remove(&view_id);
